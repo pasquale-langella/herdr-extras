@@ -24,6 +24,8 @@ From this repo:
 .\install.ps1
 ```
 
+That installs both add-ons and writes `~/.config/herdr-app/programs.json` so Herdr’s **Cursor** Agents / New-menu entry launches the OSC wrapper. After install, starting Cursor from that menu should show it in the Agents pane.
+
 Or step by step:
 
 ### 1. Terminal ids in pane headers
@@ -48,28 +50,46 @@ pip install pywinpty
 $dest = "$env:USERPROFILE\.cursor\herdr-status"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Copy-Item .\cursor-status\* $dest -Force
-node "$dest\install-hooks.js"
+node "$dest\install-hooks.js" install
 ```
 
-Launch Cursor **through the wrapper** (not bare `cursor-agent`):
+Point Herdr’s Cursor menu at the wrapper (merge into existing `programs.json` if you already have one):
+
+```powershell
+$py = (Get-Command python).Source
+$wrapper = "$env:USERPROFILE\.cursor\herdr-status\cursor-herdr.py"
+$programsPath = "$env:USERPROFILE\.config\herdr-app\programs.json"
+@{
+  programs = @{
+    cursor = @{
+      run = @($py, $wrapper)
+      match = @("cursor-agent", "cursor-herdr.py")
+    }
+  }
+} | ConvertTo-Json -Depth 6 | Set-Content $programsPath -Encoding utf8
+```
+
+**Agents-menu starts** then go through `cursor-herdr.py` automatically. Manual launch (same argv):
 
 ```powershell
 herdr-app do terminal.open --place right --name cursor --folder "$PWD" `
-  --argv "[`"python`",`"$env:USERPROFILE\.cursor\herdr-status\cursor-herdr.py`",`"--trust`"]"
+  --argv "[`"$((Get-Command python).Source)`",`"$env:USERPROFILE\.cursor\herdr-status\cursor-herdr.py`"]"
 ```
 
 Confirm:
 
 ```powershell
 hc ls
-# expect app=cursor and a status (idle/working/…)
+# expect agent=cursor and a status (idle/working/…)
 ```
+
+Bare `cursor-agent` (without the wrapper) still will not appear in Agents.
 
 ## Limits
 
 - **No `blocked` state** — Cursor has no safe hook for approval waits.
 - Restart Cursor sessions after installing hooks (hooks load at startup).
-- This pane only reports status when started via `cursor-herdr.py`.
+- Status only reports when the session was started via `cursor-herdr.py` (Agents menu after install, or the argv above).
 - `pane-ids` is a clone of Herdr’s shipped `pane` mod; re-clone after big Herdr upgrades if headers drift.
 
 ## Uninstall
@@ -78,6 +98,8 @@ hc ls
 node "$env:USERPROFILE\.cursor\herdr-status\install-hooks.js" uninstall
 Remove-Item "$env:USERPROFILE\.cursor\herdr-status" -Recurse -Force
 Remove-Item "$env:USERPROFILE\.config\herdr-app\mods\pane-ids" -Recurse -Force
+# If programs.json only had the cursor override, remove it; otherwise edit out programs.cursor.run
+Remove-Item "$env:USERPROFILE\.config\herdr-app\programs.json" -ErrorAction SilentlyContinue
 herdr-app do layout.switch --name main
 ```
 
@@ -90,7 +112,7 @@ cursor-status/          Windows Cursor → OSC 7501 bridge
   cursor-herdr.py       ConPTY wrapper that emits OSC 7501
   cursor-herdr.cmd      Convenience launcher
   install-hooks.js      Merge/remove ~/.cursor/hooks.json entries
-install.ps1             One-shot installer
+install.ps1             One-shot installer (also writes programs.json)
 ```
 
 ## License
