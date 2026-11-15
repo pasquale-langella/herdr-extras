@@ -21,16 +21,16 @@ const {
 } = require("./logic");
 
 const HOME = os.homedir();
-const DIR = path.join(HOME, ".cursor", "herdr-status");
+const DIR = path.join(HOME, ".config", "herdr-extras", "session-resume");
 const STATE = path.join(DIR, "session-resume-state.json");
-const INBOX = path.join(DIR, "session-inbox");
+const INBOX = path.join(DIR, "inbox");
 const LOCK = path.join(DIR, "session-resume.lock");
 const LOG = path.join(DIR, "session-resume.log");
 const ONCE = process.argv.includes("--once");
 const INTERVAL_MS = 5000;
 
 const PATHS = {
-  cursor: path.join(DIR, "cursor-herdr.exe"),
+  cursor: path.join(HOME, ".cursor", "herdr-status", "cursor-herdr.exe"),
   claude: which("claude") || "claude",
   copilot: which("copilot") || "copilot",
 };

@@ -1,9 +1,10 @@
 # Herdr extras (Windows)
 
-Two small add-ons for [Herdr](https://herdr.dev) on Windows:
+Three add-ons for [Herdr](https://herdr.dev) on Windows:
 
 1. **`pane-ids`** — pane headers show the terminal address (`t4`, `t10`, …)
 2. **`cursor-status`** — Cursor Agent CLI appears in the Agents sidebar (OSC 7501)
+3. **`session-resume`** — after herdr-core restarts, reopen the chat that was in each tab
 
 Cursor Agent does not emit OSC 7501 itself. On Windows, Cursor hooks also cannot write into Herdr’s ConPTY. This package uses hooks to record state plus a thin launcher that shares Herdr’s console with Cursor and injects OSC 7501 onto the same stdout stream.
 
@@ -25,7 +26,7 @@ From this repo:
 .\install.ps1
 ```
 
-That installs both add-ons, builds `~\.cursor\herdr-status\cursor-herdr.exe`, writes `programs.json` (UTF-8 **without** BOM), and prepends `~\.cursor\herdr-status\bin` on your User PATH.
+That installs the add-ons, builds `~\.cursor\herdr-status\cursor-herdr.exe`, writes `programs.json` (UTF-8 **without** BOM), prepends `~\.cursor\herdr-status\bin` on your User PATH, and starts the session-resume watcher from `~\.config\herdr-extras\session-resume`.
 
 After install, these report into the Agents pane and stay interactive:
 
@@ -59,7 +60,7 @@ Herdr keeps the tabs, then puts PowerShell back in a pane when `herdr-core` itse
 
 The saved conversation comes back. The old terminal scrollback does not. A shell you have already typed in (more than a few commands) is left alone. Two recovery shells in the same tab are matched by pane when Herdr kept the pane id, and left alone when that is ambiguous.
 
-`install.ps1` adds `HerdrSessionResume` to your user logon startup (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) and starts the watcher. It has to see a chat once before a restart; the panes that were already PowerShell when you installed it are not rebuilt.
+`install.ps1` copies this watcher on its own (not inside the Cursor status bridge), adds `HerdrSessionResume` to your user logon startup (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), and starts it. Cursor hooks drop the conversation id in `~\.config\herdr-extras\session-resume\inbox`. It has to see a chat once before a restart; the panes that were already PowerShell when you installed it are not rebuilt.
 
 ## Limits
 
@@ -82,6 +83,7 @@ Remove-Item "$env:USERPROFILE\.cursor\herdr-status" -Recurse -Force
 Remove-Item "$env:USERPROFILE\.config\herdr-app\mods\pane-ids" -Recurse -Force
 # If programs.json only had the cursor override, remove it; otherwise edit out programs.cursor.run
 Remove-Item "$env:USERPROFILE\.config\herdr-app\programs.json" -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\.config\herdr-extras\session-resume" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "HerdrSessionResume" -ErrorAction SilentlyContinue
 herdr-app do layout.switch --name main
 ```
@@ -98,10 +100,10 @@ cursor-status/              Windows Cursor → OSC 7501 bridge
   bin/cursor-agent.cmd      PATH shim (Herdr → wrapper; else real CLI)
   bin/agent.cmd             Same for the `agent` alias
   install-hooks.js          Merge/remove ~/.cursor/hooks.json entries
-  session-resume/           After a core restart, resume the chat that was in the tab
-    logic.js                Shell-vs-agent decisions and session matching
-    watch.js                Polls `hc` and types the resume command
-    run.ps1                 Logon entrypoint
+session-resume/             After a core restart, resume the chat that was in the tab
+  logic.js                  Shell-vs-agent decisions and session matching
+  watch.js                  Polls `hc` and types the resume command
+  run.ps1                   Logon entrypoint
 install.ps1                 One-shot installer (builds .exe, programs.json, PATH, logon startup)
 ```
 

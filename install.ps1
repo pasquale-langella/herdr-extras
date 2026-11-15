@@ -128,15 +128,35 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($programsPath, (($out | ConvertTo-Json -Depth 8) + "`n"), $utf8NoBom)
 Write-Host "    programs.json: cursor.run -> $exe"
 
-Write-Host "==> Starting the session-resume watcher (logon + this session)"
-$run = Join-Path $dest "session-resume\run.ps1"
-if (-not (Test-Path $run)) {
-  Write-Warning "session-resume\run.ps1 was not copied; skip logon startup"
+Write-Host "==> Installing session-resume"
+$resumeSrc = Join-Path $Root "session-resume"
+$resumeDest = Join-Path $env:USERPROFILE ".config\herdr-extras\session-resume"
+if (-not (Test-Path $resumeSrc)) {
+  Write-Warning "session-resume source is missing; skip"
 } else {
-  # HKCU Run does not need an admin scheduled task. A logon task was access-denied here.
+  New-Item -ItemType Directory -Force -Path $resumeDest | Out-Null
+  Copy-Item (Join-Path $resumeSrc "*") $resumeDest -Force
+  $oldState = Join-Path $dest "session-resume-state.json"
+  $newState = Join-Path $resumeDest "session-resume-state.json"
+  if ((Test-Path $oldState) -and -not (Test-Path $newState)) {
+    Copy-Item $oldState $newState
+  }
+  foreach ($leftover in @(
+      "session-resume",
+      "session-inbox",
+      "session-resume-state.json",
+      "session-resume.lock",
+      "session-resume.log",
+      "session-resume.log.old"
+    )) {
+    $path = Join-Path $dest $leftover
+    if (Test-Path $path) { Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+  $run = Join-Path $resumeDest "run.ps1"
   $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
   $launch = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$run`""
   Set-ItemProperty -Path $runKey -Name "HerdrSessionResume" -Value $launch
+  Write-Host "    $resumeDest"
   Write-Host "    HKCU Run: HerdrSessionResume"
   Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$run`""
 }

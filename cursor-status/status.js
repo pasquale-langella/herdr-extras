@@ -84,7 +84,7 @@ function conversationId(payload) {
 function writeInbox(event, payload) {
   const id = process.env.HC_TERMINAL_ID || "";
   if (!/^t[0-9a-z]+$/i.test(id)) return;
-  const inbox = path.join(DIR, "session-inbox");
+  const inbox = path.join(os.homedir(), ".config", "herdr-extras", "session-resume", "inbox");
   fs.mkdirSync(inbox, { recursive: true });
   const cwd = typeof payload?.cwd === "string" ? payload.cwd.slice(0, 1024) : "";
   const note = {
