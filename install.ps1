@@ -53,11 +53,20 @@ if (-not (Test-Path $csc)) {
 }
 $cs = Join-Path $dest "cursor-herdr-launch.cs"
 $exe = Join-Path $dest "cursor-herdr.exe"
-& $csc /nologo /target:exe /out:$exe $cs | Out-Host
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) {
+$built = Join-Path $dest "cursor-herdr.new.exe"
+if (Test-Path $built) { Remove-Item $built -Force }
+& $csc /nologo /target:exe /out:$built $cs | Out-Host
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $built)) {
   throw "Failed to build cursor-herdr.exe"
 }
-Write-Host "    $exe"
+try {
+  Move-Item $built $exe -Force
+  Write-Host "    $exe"
+} catch {
+  Remove-Item $built -Force -ErrorAction SilentlyContinue
+  if (-not (Test-Path $exe)) { throw }
+  Write-Warning "cursor-herdr.exe is in use. Left the existing binary in place; restart Cursor sessions later to pick up a rebuild."
+}
 
 Write-Host "==> Wiring Cursor hooks"
 node (Join-Path $dest "install-hooks.js") install
@@ -118,6 +127,19 @@ $out = [pscustomobject]@{ programs = $programsObj }
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($programsPath, (($out | ConvertTo-Json -Depth 8) + "`n"), $utf8NoBom)
 Write-Host "    programs.json: cursor.run -> $exe"
+
+Write-Host "==> Starting the session-resume watcher (logon + this session)"
+$run = Join-Path $dest "session-resume\run.ps1"
+if (-not (Test-Path $run)) {
+  Write-Warning "session-resume\run.ps1 was not copied; skip logon startup"
+} else {
+  # HKCU Run does not need an admin scheduled task. A logon task was access-denied here.
+  $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+  $launch = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$run`""
+  Set-ItemProperty -Path $runKey -Name "HerdrSessionResume" -Value $launch
+  Write-Host "    HKCU Run: HerdrSessionResume"
+  Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$run`""
+}
 
 Write-Host ""
 Write-Host "Done."

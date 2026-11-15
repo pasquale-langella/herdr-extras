@@ -46,6 +46,21 @@ hc ls
 
 Outside Herdr (no `HC_TERMINAL_ID`), the shim calls the real Cursor Agent CLI unchanged.
 
+## Same chat after a restart
+
+Herdr keeps the tabs, then puts PowerShell back in a pane when `herdr-core` itself stops (reboot, logoff, or the core process ending). It does not relaunch the agent. `session-resume` does that part:
+
+1. While an agent is open, the watcher remembers the terminal, the tab, the folder, and the chat id.
+2. Cursor's id comes from the existing hooks (`conversation_id`). Claude's id comes from `~\.claude\projects`. Copilot's id comes from `~\.copilot\session-store.db`.
+3. The next time the core is running and that pane is an untouched PowerShell (the recovery shell), the watcher types one resume command into it:
+   - Cursor: `cursor-herdr.exe --resume <chat>`
+   - Claude: `claude --resume <session>`
+   - Copilot: `copilot --resume <session>`
+
+The saved conversation comes back. The old terminal scrollback does not. A shell you have already typed in (more than a few commands) is left alone. Two recovery shells in the same tab are matched by pane when Herdr kept the pane id, and left alone when that is ambiguous.
+
+`install.ps1` adds `HerdrSessionResume` to your user logon startup (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) and starts the watcher. It has to see a chat once before a restart; the panes that were already PowerShell when you installed it are not rebuilt.
+
 ## Limits
 
 - **No `blocked` state** — Cursor has no safe hook for approval waits.
@@ -67,6 +82,7 @@ Remove-Item "$env:USERPROFILE\.cursor\herdr-status" -Recurse -Force
 Remove-Item "$env:USERPROFILE\.config\herdr-app\mods\pane-ids" -Recurse -Force
 # If programs.json only had the cursor override, remove it; otherwise edit out programs.cursor.run
 Remove-Item "$env:USERPROFILE\.config\herdr-app\programs.json" -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "HerdrSessionResume" -ErrorAction SilentlyContinue
 herdr-app do layout.switch --name main
 ```
 
@@ -82,7 +98,11 @@ cursor-status/              Windows Cursor → OSC 7501 bridge
   bin/cursor-agent.cmd      PATH shim (Herdr → wrapper; else real CLI)
   bin/agent.cmd             Same for the `agent` alias
   install-hooks.js          Merge/remove ~/.cursor/hooks.json entries
-install.ps1                 One-shot installer (builds .exe, programs.json, PATH)
+  session-resume/           After a core restart, resume the chat that was in the tab
+    logic.js                Shell-vs-agent decisions and session matching
+    watch.js                Polls `hc` and types the resume command
+    run.ps1                 Logon entrypoint
+install.ps1                 One-shot installer (builds .exe, programs.json, PATH, logon startup)
 ```
 
 ## License
