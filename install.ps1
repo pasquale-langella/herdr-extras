@@ -1,4 +1,9 @@
 #Requires -Version 5.1
+param(
+  [switch]$WithSshBridge,
+  [string]$SshAuthorizedKey = ""
+)
+
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
 
@@ -159,6 +164,16 @@ if (-not (Test-Path $resumeSrc)) {
   Write-Host "    $resumeDest"
   Write-Host "    HKCU Run: HerdrSessionResume"
   Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$run`""
+}
+
+if ($WithSshBridge -or $SshAuthorizedKey.Trim()) {
+  Write-Host "==> Installing ssh-bridge (opt-in)"
+  $sshInstaller = Join-Path $Root "ssh-bridge\install.ps1"
+  if ($SshAuthorizedKey.Trim()) {
+    & $sshInstaller -AuthorizedKey $SshAuthorizedKey
+  } else {
+    & $sshInstaller
+  }
 }
 
 Write-Host ""
