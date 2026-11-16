@@ -12,15 +12,37 @@ $SrcDir = $PSScriptRoot
 $DestDir = Join-Path $env:USERPROFILE ".config\herdr-extras\herdr-ssh-bridge"
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $RunName = "HerdrSshBridge"
+$TaskName = "HerdrSshBridge"
 
 function Stop-RunningBridge {
-  $procs = @(Get-CimInstance Win32_Process -Filter "Name = 'herdr-ssh-bridge.exe'" -ErrorAction SilentlyContinue)
-  foreach ($p in $procs) {
-    Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  for ($attempt = 0; $attempt -lt 20; $attempt++) {
+    $procs = @(Get-Process -Name "herdr-ssh-bridge" -ErrorAction SilentlyContinue)
+    if ($procs.Count -eq 0) { break }
+    foreach ($p in $procs) {
+      Stop-Process -Id ([int]$p.Id) -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 250
   }
-  if ($procs.Count -gt 0) {
-    Start-Sleep -Milliseconds 300
+}
+
+function Wait-TcpPort([int]$Port, [int]$TimeoutSeconds = 240) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+      $iar = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+      if ($iar.AsyncWaitHandle.WaitOne(250) -and $client.Connected) {
+        $client.EndConnect($iar)
+        return $true
+      }
+    } catch {
+    } finally {
+      $client.Close()
+    }
+    Start-Sleep -Milliseconds 250
   }
+  return $false
 }
 
 function Lock-PrivateFile([string]$Path) {
@@ -32,6 +54,7 @@ function Lock-PrivateFile([string]$Path) {
 if ($Uninstall) {
   Write-Host "==> Stopping herdr-ssh-bridge"
   Stop-RunningBridge
+  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
   Remove-ItemProperty -Path $RunKey -Name $RunName -ErrorAction SilentlyContinue
 
   if (Get-Command tailscale -ErrorAction SilentlyContinue) {
@@ -66,29 +89,48 @@ foreach ($file in @("go.mod", "go.sum", "main.go")) {
 
 Write-Host "==> Building herdr-ssh-bridge.exe"
 $exePath = Join-Path $DestDir "herdr-ssh-bridge.exe"
-$newExe = Join-Path $DestDir "herdr-ssh-bridge.new.exe"
-if (Test-Path $newExe) { Remove-Item $newExe -Force }
+$hashFile = Join-Path $DestDir ".source-sha256"
+$srcConcat = (@("go.mod", "go.sum", "main.go") | ForEach-Object { (Get-FileHash (Join-Path $DestDir $_) -Algorithm SHA256).Hash }) -join ":"
+$prevHash = if (Test-Path $hashFile) { (Get-Content $hashFile -Raw).Trim() } else { "" }
 
-$prevToolchain = $env:GOTOOLCHAIN
-$goVerRaw = (& $goCmd.Source version) -join " "
-if ($goVerRaw -match 'go1\.(\d+)' -and [int]$Matches[1] -ge 23) {
-  # Avoid unnecessary Go toolchain downloads behind corporate VPNs/proxies
-  $env:GOTOOLCHAIN = "local"
-}
-Push-Location $DestDir
-try {
-  & $goCmd.Source build -trimpath -ldflags="-s -w -H=windowsgui" -o $newExe . | Out-Host
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path $newExe)) {
-    throw "go build failed"
+if ((Test-Path $exePath) -and ($prevHash -eq $srcConcat)) {
+  Write-Host "    $exePath (up to date, skipping rebuild)"
+} else {
+  $newExe = Join-Path $DestDir "herdr-ssh-bridge.new.exe"
+  if (Test-Path $newExe) { Remove-Item $newExe -Force }
+
+  $prevToolchain = $env:GOTOOLCHAIN
+  $goVerRaw = (& $goCmd.Source version) -join " "
+  if ($goVerRaw -match 'go1\.(\d+)' -and [int]$Matches[1] -ge 23) {
+    # Avoid unnecessary Go toolchain downloads behind corporate VPNs/proxies
+    $env:GOTOOLCHAIN = "local"
   }
-} finally {
-  Pop-Location
-  $env:GOTOOLCHAIN = $prevToolchain
-}
+  Push-Location $DestDir
+  try {
+    & $goCmd.Source build -trimpath -ldflags="-s -w -H=windowsgui" -o $newExe . | Out-Host
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $newExe)) {
+      throw "go build failed"
+    }
+  } finally {
+    Pop-Location
+    $env:GOTOOLCHAIN = $prevToolchain
+  }
 
-Stop-RunningBridge
-Move-Item $newExe $exePath -Force
-Write-Host "    $exePath"
+  Stop-RunningBridge
+  for ($i = 0; $i -lt 20; $i++) {
+    try {
+      if (Test-Path $exePath) { Remove-Item $exePath -Force -ErrorAction Stop }
+      Move-Item $newExe $exePath -Force -ErrorAction Stop
+      break
+    } catch {
+      if ($i -eq 19) { throw }
+      Stop-RunningBridge
+      Start-Sleep -Milliseconds 250
+    }
+  }
+  Set-Content -Path $hashFile -Value $srcConcat -Encoding ascii
+  Write-Host "    $exePath"
+}
 
 $authFile = Join-Path $DestDir "authorized_keys"
 if ($AuthorizedKey.Trim()) {
@@ -120,18 +162,45 @@ if ($launchArgs.Count -gt 0) {
 }
 
 Write-Host "==> Registering logon startup & starting bridge"
-Set-ItemProperty -Path $RunKey -Name $RunName -Value $runValue
-if ($launchArgs.Count -gt 0) {
-  Start-Process -WindowStyle Hidden -FilePath $exePath -ArgumentList $launchArgs
-} else {
-  Start-Process -WindowStyle Hidden -FilePath $exePath
+$startedViaTask = $false
+try {
+  $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+  if ($launchArgs.Count -gt 0) {
+    $action = New-ScheduledTaskAction -Execute $exePath -Argument ($launchArgs -join " ") -WorkingDirectory $DestDir
+  } else {
+    $action = New-ScheduledTaskAction -Execute $exePath -WorkingDirectory $DestDir
+  }
+  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
+  $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
+  $settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -MultipleInstances IgnoreNew `
+    -RestartCount 999 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
+  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+  Remove-ItemProperty -Path $RunKey -Name $RunName -ErrorAction SilentlyContinue
+  Start-ScheduledTask -TaskName $TaskName
+  $startedViaTask = $true
+  Write-Host "    Scheduled Task: $TaskName (logon + auto-restart, outside terminal Job Objects)"
+} catch {
+  Write-Warning "Task Scheduler registration failed ($($_.Exception.Message)); falling back to HKCU Run."
+  Set-ItemProperty -Path $RunKey -Name $RunName -Value $runValue
+  if ($launchArgs.Count -gt 0) {
+    Start-Process -WindowStyle Hidden -FilePath $exePath -ArgumentList $launchArgs
+  } else {
+    Start-Process -WindowStyle Hidden -FilePath $exePath
+  }
+}
+
+if (-not (Wait-TcpPort -Port $ListenPort -TimeoutSeconds 240)) {
+  throw "herdr-ssh-bridge did not start listening on $listenAddr within 240s (startedViaTask=$startedViaTask)."
 }
 
 $fpFile = Join-Path $DestDir "host_ed25519.fingerprint"
 $privKey = Join-Path $DestDir "host_ed25519"
-for ($i = 0; $i -lt 30 -and -not (Test-Path $fpFile); $i++) {
-  Start-Sleep -Milliseconds 100
-}
 Lock-PrivateFile $privKey
 
 $tsHost = "<your-tailscale-ip-or-magicdns>"

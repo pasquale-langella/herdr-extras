@@ -605,7 +605,11 @@ func runHcProcess(connCtx context.Context, ch ssh.Channel, req *ssh.Request, hcE
 }
 
 func startKeepaliveLoop(ctx context.Context, sshConn *ssh.ServerConn, peerDesc string) {
-	ticker := time.NewTicker(30 * time.Second)
+	// Mobile / e-ink devices over Tailscale often suspend networking while the
+	// screen is locked ("offline") and resume minutes later without losing the
+	// virtual Tailscale tunnel. Probe gently (every 5m, up to 1h) so screen-lock
+	// sleep does not prematurely close the SSH session with ECONNRESET.
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	missed := 0
 	for {
@@ -625,12 +629,12 @@ func startKeepaliveLoop(ctx context.Context, sshConn *ssh.ServerConn, peerDesc s
 				} else {
 					missed = 0
 				}
-			case <-time.After(15 * time.Second):
+			case <-time.After(20 * time.Second):
 				missed++
 			case <-ctx.Done():
 				return
 			}
-			if missed >= 2 {
+			if missed >= 12 {
 				log.Printf("[%s] closing stale SSH connection after missed keepalives", peerDesc)
 				_ = sshConn.Close()
 				return
@@ -688,7 +692,7 @@ func queryCoreVersion(hcExe string, session string) string {
 func handleTCPConn(rawConn net.Conn, baseConfig *ssh.ServerConfig, hcExe string) {
 	if tcpConn, ok := rawConn.(*net.TCPConn); ok {
 		_ = tcpConn.SetKeepAlive(true)
-		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
+		_ = tcpConn.SetKeepAlivePeriod(5 * time.Minute)
 	}
 	_ = rawConn.SetDeadline(time.Now().Add(30 * time.Second))
 
@@ -741,7 +745,12 @@ func main() {
 	listenAddr := flag.String("listen", "127.0.0.1:2222", "Loopback TCP address to listen on")
 	stateDir := flag.String("dir", defaultDir, "Directory for host key, authorized_keys, and logs")
 	logStderr := flag.Bool("stderr", false, "Also mirror logs to stderr")
+	selfCheck := flag.Bool("selfcheck", false, "Exit 0 immediately (used by installer to pre-warm endpoint AV scan)")
 	flag.Parse()
+
+	if *selfCheck {
+		os.Exit(0)
+	}
 
 	_ = os.MkdirAll(*stateDir, 0700)
 	logWriter := &boundedLogWriter{

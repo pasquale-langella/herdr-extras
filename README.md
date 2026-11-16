@@ -140,7 +140,7 @@ session-resume/             After a core restart, resume the chat that was in th
 ssh-bridge/                 Opt-in Tailscale / mobile SSH → named-pipe bridge
   main.go                   User-mode SSH server + overlapped named-pipe proxy
   go.mod / go.sum           Go module (golang.org/x/crypto/ssh, golang.org/x/sys)
-  install.ps1               Builds .exe, configures HKCU Run + tailscale serve (-Uninstall to remove)
+  install.ps1               Builds .exe, registers self-healing Scheduled Task + tailscale serve (-Uninstall to remove)
 install.ps1                 One-shot installer (builds .exe, programs.json, PATH, logon startup)
 ```
 
