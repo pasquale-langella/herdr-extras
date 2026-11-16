@@ -64,6 +64,7 @@ The saved conversation comes back. The old terminal scrollback does not. A shell
 
 ## Limits
 
+- **Prompt bar contrast** — inside Herdr, the launcher sets `TERM_THEME` from `settings.json` `appearance` (or the Windows app theme when that is unset) so Cursor does not paint a black input row on a light terminal. A `TERM_THEME` already in the environment is left alone. Restart the Cursor tab after changing appearance.
 - **No `blocked` state** — Cursor has no safe hook for approval waits.
 - Restart Cursor sessions after installing hooks (hooks load at startup).
 - A `cursor-agent` started by absolute path under `%LOCALAPPDATA%\cursor-agent\...` skips the PATH shim (Agents menu / `programs.json` still use the wrapper).

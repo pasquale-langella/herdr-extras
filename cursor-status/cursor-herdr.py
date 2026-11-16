@@ -7,11 +7,11 @@ broke typing) and writes OSC 7501 onto the same stdout stream Herdr reads.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 APP = "cursor"
@@ -45,6 +45,47 @@ def watch_state(stop: threading.Event) -> None:
         except Exception:
             pass
         stop.wait(0.15)
+
+
+def herdr_term_theme() -> str | None:
+    """Light or dark for Cursor's prompt bar.
+
+    Cursor paints that bar for a dark terminal unless TERM_THEME or a
+    successful background-color probe says otherwise. Herdr's light appearance
+    does not answer that probe, so the bar stays near-black and typed text
+    (the light theme's dark foreground) disappears. An already-set TERM_THEME
+    wins.
+    """
+    if os.environ.get("TERM_THEME"):
+        return None
+
+    home = os.environ.get("HERDR_APP_HOME")
+    settings = (
+        Path(home) / "settings.json"
+        if home
+        else Path.home() / ".config" / "herdr-app" / "settings.json"
+    )
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        data = {}
+    appearance = data.get("appearance") if isinstance(data, dict) else None
+    if appearance in ("light", "dark"):
+        return appearance
+
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        return "light" if int(value) else "dark"
+    except (OSError, ValueError):
+        return None
 
 
 def find_cursor_agent() -> list[str]:
@@ -101,6 +142,9 @@ def main() -> int:
     env["CURSOR_HERDR_WRAPPED"] = "1"
     env.setdefault("TERM", "xterm-256color")
     env.setdefault("COLORTERM", "truecolor")
+    theme = herdr_term_theme()
+    if theme:
+        env.setdefault("TERM_THEME", theme)
     # Avoid the PATH shim re-entering this wrapper.
     bin_shim = str(Path(__file__).resolve().parent / "bin")
     path = env.get("PATH", "")
