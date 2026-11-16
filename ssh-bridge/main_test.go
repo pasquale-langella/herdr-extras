@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/windows"
 )
 
 func TestResolveExecCommand(t *testing.T) {
@@ -126,5 +127,26 @@ func TestLoadAuthorizedKeysSkipsCommentsAndMalformedLines(t *testing.T) {
 	entries := loadAuthorizedKeys([]string{path})
 	if len(entries) != 1 || entries[0].comment != "test-phone" {
 		t.Fatalf("loadAuthorizedKeys got %d entries (%+v), want 1 entry 'test-phone'", len(entries), entries)
+	}
+}
+
+func TestEnsureResponsivePriorityRaisesBelowNormal(t *testing.T) {
+	proc := windows.CurrentProcess()
+	orig, err := windows.GetPriorityClass(proc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = windows.SetPriorityClass(proc, orig) }()
+
+	if err := windows.SetPriorityClass(proc, windows.BELOW_NORMAL_PRIORITY_CLASS); err != nil {
+		t.Fatal(err)
+	}
+	ensureResponsivePriority()
+	got, err := windows.GetPriorityClass(proc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != windows.ABOVE_NORMAL_PRIORITY_CLASS {
+		t.Fatalf("priority class = 0x%x, want ABOVE_NORMAL (0x%x)", got, windows.ABOVE_NORMAL_PRIORITY_CLASS)
 	}
 }

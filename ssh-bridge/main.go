@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -23,12 +24,66 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/windows"
 )
 
 const createNoWindow = 0x08000000
+
+var (
+	modKernel32               = windows.NewLazySystemDLL("kernel32.dll")
+	procSetProcessInformation = modKernel32.NewProc("SetProcessInformation")
+)
+
+type memoryPriorityInfo struct {
+	MemoryPriority uint32
+}
+
+type processPowerThrottlingState struct {
+	Version     uint32
+	ControlMask uint32
+	StateMask   uint32
+}
+
+// Prevents Windows Task Scheduler's default background throttling (BelowNormal
+// CPU, MemoryPriority=2 page trimming, and EcoQoS Efficiency Mode) from
+// starving SSH handshakes when coding agents load the machine.
+func ensureResponsivePriority() {
+	proc := windows.CurrentProcess()
+	if cls, err := windows.GetPriorityClass(proc); err == nil {
+		if cls != windows.ABOVE_NORMAL_PRIORITY_CLASS &&
+			cls != windows.HIGH_PRIORITY_CLASS &&
+			cls != windows.REALTIME_PRIORITY_CLASS {
+			_ = windows.SetPriorityClass(proc, windows.ABOVE_NORMAL_PRIORITY_CLASS)
+		}
+	}
+	const (
+		processMemoryPriority    = 0
+		memoryPriorityNormal     = 5
+		processPowerThrottling   = 4
+		powerThrottlingExecSpeed = 0x1
+	)
+	memInfo := memoryPriorityInfo{MemoryPriority: memoryPriorityNormal}
+	_, _, _ = procSetProcessInformation.Call(
+		uintptr(proc),
+		processMemoryPriority,
+		uintptr(unsafe.Pointer(&memInfo)),
+		unsafe.Sizeof(memInfo),
+	)
+	powerInfo := processPowerThrottlingState{
+		Version:     1,
+		ControlMask: powerThrottlingExecSpeed,
+		StateMask:   0,
+	}
+	_, _, _ = procSetProcessInformation.Call(
+		uintptr(proc),
+		processPowerThrottling,
+		uintptr(unsafe.Pointer(&powerInfo)),
+		unsafe.Sizeof(powerInfo),
+	)
+}
 
 var (
 	reDirectCmd = regexp.MustCompile(
@@ -165,6 +220,15 @@ func corePipePath(session string) string {
 		session = "default"
 	}
 	rawUser := os.Getenv("USERNAME")
+	if rawUser == "" {
+		if u, err := user.Current(); err == nil {
+			if idx := strings.LastIndexByte(u.Username, '\\'); idx >= 0 {
+				rawUser = u.Username[idx+1:]
+			} else {
+				rawUser = u.Username
+			}
+		}
+	}
 	var b strings.Builder
 	for i := 0; i < len(rawUser); i++ {
 		c := rawUser[i]
@@ -751,6 +815,8 @@ func main() {
 	if *selfCheck {
 		os.Exit(0)
 	}
+
+	ensureResponsivePriority()
 
 	_ = os.MkdirAll(*stateDir, 0700)
 	logWriter := &boundedLogWriter{
