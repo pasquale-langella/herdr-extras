@@ -69,43 +69,11 @@ function writeState(state) {
   );
 }
 
-function conversationId(payload) {
-  if (!payload || typeof payload !== "object") return null;
-  const id =
-    payload.conversation_id ||
-    payload.session_id ||
-    payload.conversationId ||
-    payload.sessionId ||
-    null;
-  return typeof id === "string" && id.trim() ? id.trim() : null;
-}
-
-// The resume watcher reads these. One file per terminal, overwritten each hook.
-function writeInbox(event, payload) {
-  const id = process.env.HC_TERMINAL_ID || "";
-  if (!/^t[0-9a-z]+$/i.test(id)) return;
-  const inbox = path.join(os.homedir(), ".config", "herdr-extras", "session-resume", "inbox");
-  fs.mkdirSync(inbox, { recursive: true });
-  const cwd = typeof payload?.cwd === "string" ? payload.cwd.slice(0, 1024) : "";
-  const note = {
-    at: Date.now(),
-    event,
-    conversationId: conversationId(payload),
-    cwd,
-  };
-  fs.writeFileSync(path.join(inbox, `${id}.json`), JSON.stringify(note) + "\n");
-}
-
 async function main() {
   const [mode, event] = process.argv.slice(2);
   if (mode !== "hook") process.exit(0);
   if (!process.env.HC_TERMINAL_ID) process.exit(0);
   const payload = await readPayload();
-  try {
-    writeInbox(event, payload);
-  } catch {
-    // Status reporting still matters if the inbox disk write fails.
-  }
   const state = stateFor(event, payload);
   if (state) writeState(state);
   process.exit(0);

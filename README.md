@@ -1,11 +1,10 @@
 # Herdr extras (Windows)
 
-Four add-ons for [Herdr](https://herdr.dev) on Windows:
+Three add-ons for [Herdr](https://herdr.dev) on Windows:
 
 1. **`pane-ids`** — pane headers show the terminal address (`t4`, `t10`, …)
 2. **`cursor-status`** — Cursor Agent CLI appears in the Agents sidebar (OSC 7501)
-3. **`session-resume`** — after herdr-core restarts, reopen the chat that was in each tab
-4. **`ssh-bridge`** *(opt-in)* — connect Herdr Mobile / remote `hc` over Tailscale on Entra ID (`AzureAD\…`) and corporate Windows machines
+3. **`ssh-bridge`** *(opt-in)* — connect Herdr Mobile / remote `hc` over Tailscale on Entra ID (`AzureAD\…`) and corporate Windows machines
 
 Cursor Agent does not emit OSC 7501 itself. On Windows, Cursor hooks also cannot write into Herdr’s ConPTY. This package uses hooks to record state plus a thin launcher that shares Herdr’s console with Cursor and injects OSC 7501 onto the same stdout stream.
 
@@ -27,7 +26,7 @@ From this repo:
 .\install.ps1
 ```
 
-That installs the add-ons, builds `~\.cursor\herdr-status\cursor-herdr.exe`, writes `programs.json` (UTF-8 **without** BOM), prepends `~\.cursor\herdr-status\bin` on your User PATH, and starts the session-resume watcher from `~\.config\herdr-extras\session-resume`.
+That installs the add-ons, builds `~\.cursor\herdr-status\cursor-herdr.exe`, writes `programs.json` (UTF-8 **without** BOM), prepends `~\.cursor\herdr-status\bin` on your User PATH.
 
 After install, these report into the Agents pane and stay interactive:
 
@@ -115,8 +114,6 @@ Remove-Item "$env:USERPROFILE\.cursor\herdr-status" -Recurse -Force
 Remove-Item "$env:USERPROFILE\.config\herdr-app\mods\pane-ids" -Recurse -Force
 # If programs.json only had the cursor override, remove it; otherwise edit out programs.cursor.run
 Remove-Item "$env:USERPROFILE\.config\herdr-app\programs.json" -ErrorAction SilentlyContinue
-Remove-Item "$env:USERPROFILE\.config\herdr-extras\session-resume" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "HerdrSessionResume" -ErrorAction SilentlyContinue
 .\ssh-bridge\install.ps1 -Uninstall
 herdr-app do layout.switch --name main
 ```
@@ -133,10 +130,6 @@ cursor-status/              Windows Cursor → OSC 7501 bridge
   bin/cursor-agent.cmd      PATH shim (Herdr → wrapper; else real CLI)
   bin/agent.cmd             Same for the `agent` alias
   install-hooks.js          Merge/remove ~/.cursor/hooks.json entries
-session-resume/             After a core restart, resume the chat that was in the tab
-  logic.js                  Shell-vs-agent decisions and session matching
-  watch.js                  Polls `hc` and types the resume command
-  run.ps1                   Logon entrypoint
 ssh-bridge/                 Opt-in Tailscale / mobile SSH → named-pipe bridge
   main.go                   User-mode SSH server + overlapped named-pipe proxy
   go.mod / go.sum           Go module (golang.org/x/crypto/ssh, golang.org/x/sys)
